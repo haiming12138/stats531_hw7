@@ -1,10 +1,10 @@
 #!/bin/bash
 
-#SBATCH --job-name=foreach_multicore
-#SBATCH --mail-user=ionides@umich.edu
+#SBATCH --job-name=render
+#SBATCH --mail-user=haiming@umich.edu
 #SBATCH --mail-type=BEGIN,END,FAIL
  
-#SBATCH --account=stats531w24_class
+#SBATCH --account=datasci531w25_class
 #SBATCH --partition=standard
 
 #SBATCH --nodes=1
@@ -20,8 +20,10 @@
 ###   Load software modules
 
 module load R
+module load pandoc
 
 ####  Commands your job should run follow this line
-
-Rscript -e "Sys.setenv(RSTUDIO_PANDOC='$(PANDOC_PATH)'); rmarkdown::render('$(RMD_FILE)', output_format = 'html_document')"
+PANDOC_PATH=$(which pandoc)
+echo $PANDOC_PATH
+Rscript -e "Sys.setenv(RSTUDIO_PANDOC='${PANDOC_PATH}'); rmarkdown::render('hw7.Rmd', output_format = 'html_document')"
 

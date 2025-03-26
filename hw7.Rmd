@@ -21,9 +21,11 @@ packages <- c(
 )
 installed <- rownames(installed.packages())
 to_install <- setdiff(packages, installed)
+
 if (length(to_install) > 0) {
-  install.packages(to_install)
+  install.packages(to_install, repos = "https://cloud.r-project.org")
 }
+
 lapply(packages, library, character.only = TRUE)
 plan(multicore)
 source("model.R")

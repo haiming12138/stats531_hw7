@@ -1,4 +1,4 @@
-CLEAN_FILES = laptop_* lakes_* *.html *.txt
+CLEAN_FILES = laptop_* lakes_* *.html *.out
 RMD_FILE = hw7.Rmd
 PANDOC_PATH := $(shell which pandoc)
 
@@ -19,3 +19,6 @@ clean:
 
 render:
 	Rscript -e "Sys.setenv(RSTUDIO_PANDOC='$(PANDOC_PATH)'); rmarkdown::render('$(RMD_FILE)', output_format = 'html_document')"
+
+pandoc_p:
+	echo $(PANDOC_PATH)

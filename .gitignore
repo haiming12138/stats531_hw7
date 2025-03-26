@@ -53,3 +53,4 @@ laptop_*
 lakes_* 
 *.html
 .DS_Store
+*.out
