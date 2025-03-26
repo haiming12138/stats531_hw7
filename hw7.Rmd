@@ -1,0 +1,250 @@
+---
+title: "STATS 531 Homework 7"
+author: "Haiming Li"
+date: 'Due 2025-04-02'
+bibliography: ref.bib
+csl: ape-numeric.csl
+link-citations: true
+output:
+  html_document:
+    code_folding: hide
+    embed-resources: true
+    smooth-scroll: true
+  pdf:
+    extra_dependencies:
+      - amsmath
+---
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+packages <- c(
+  "knitr", "kableExtra", "pomp", "tidyverse",
+  "doParallel", "doRNG", "foreach", "doFuture", "future"
+)
+installed <- rownames(installed.packages())
+to_install <- setdiff(packages, installed)
+if (length(to_install) > 0) {
+  install.packages(to_install)
+}
+lapply(packages, library, character.only = TRUE)
+plan(multicore)
+source("model.R")
+start_time <- Sys.time()
+```
+
+
+## Question 7.1
+
+1.  One slight issue is that I initially confused the usage of "#" as comment, but actually I'm supposed to have it to specify sbatch parameters. I spend some time trying to understand the sbtach file syntax, but overall it was smooth.
+2.  Yes, but not with slurm or any job submission tools.
+3.  Here's the result from my local machine
+    ```{r local_time, echo=FALSE}
+    time_local <- read.csv('test_local.csv', sep = ' ')
+    kable(head(time_local)) %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                    full_width = FALSE, position = "center")
+    ```
+    Here's the result from greatlakes
+    ```{r lakes_time, echo=FALSE}
+    time_local <- read.csv('test_lakes.csv', sep = ' ')
+    kable(head(time_local)) %>%
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                    full_width = FALSE, position = "center")
+    ```
+    It appears that great lakes is at least twice as slow as my local machine. I interpret this as the architecture in greatlakes cpu are rather old, thus it's slower than my local machine. This kinda matches the result from my EECS classes, as code generally runs slower on greatlakes when having the same amount of cores as my local machine.
+
+## Question 7.2
+1.  I've adopted the SIR and SEIR model code from lecture 13 [@lec13] slides, and I've got the general setup code for particle filter and the run level from lecture 14 [@lec14] and lecture 15 [@lec15] slides.
+    ```{r seir_setup, warning=FALSE}
+    seir_step <- Csnippet("
+      double dN_SE = rbinom(S,1-exp(-Beta*I/N*dt));
+      double dN_EI = rbinom(E,1-exp(-mu_EI*dt));
+      double dN_IR = rbinom(I,1-exp(-mu_IR*dt));
+      S -= dN_SE;
+      E += dN_SE - dN_EI;
+      I += dN_EI - dN_IR;
+      R += dN_IR;
+      H += dN_IR;
+    ")
+    
+    seir_rinit <- Csnippet("
+      S = nearbyint(eta*N);
+      E = 0;
+      I = 1;
+      R = nearbyint((1-eta)*N);
+      H = 0;
+    ")
+    
+    measSEIR <- pomp(measSIR,
+      rprocess=euler(seir_step,delta.t=1/7),
+      rinit=seir_rinit,
+      paramnames=c("N","Beta","mu_EI","mu_IR","eta","k","rho"),
+      partrans=parameter_trans(
+            log=c("Beta","mu_EI","mu_IR","k"),
+            logit=c("eta","rho")
+      ),
+      statenames=c("S","E","I","R","H")
+    )
+    
+    read_csv("measles_params.csv", show_col_types = FALSE) %>%
+      filter(
+        loglik==max(loglik),
+        abs(mu_IR-2)<0.001
+        ) %>%
+      select(-loglik,-loglik.se) -> coef(measSEIR)
+    coef(measSEIR,"mu_EI") <- 0.8
+    fixed_params <- coef(measSEIR,c("N","mu_IR","k"))
+    ```
+  Here are the log-likelihoods from the SEIR model local search, which are are around -104. These log-likelihoods are evaluated via particle filter.
+    ```{r sim_setting, echo=FALSE, message=FALSE}
+    run_level <- 1
+    Np <-              switch(run_level,100, 1e3, 2e3)
+    Nlocal <-          switch(run_level,  2,   5,  20)
+    Nglobal <-         switch(run_level,  2,   20, 100)
+    Npoints_profile <- switch(run_level,  4,  10,  50)
+    Nreps_profile   <- switch(run_level,  2,   4,  15)
+    Nmif <-            switch(run_level, 10,  50, 100)
+    Nreps_eval <-      switch(run_level,  2,   5,  10)
+    
+    cores <- as.numeric(Sys.getenv('SLURM_NTASKS_PER_NODE',unset=NA))
+    runenv <- NA
+    if(is.na(cores)) {
+      results_dir <- paste0("laptop_",run_level,"/")
+      runenv <- 'laptop'
+    } else {
+      results_dir <- paste0("lakes_",run_level,"/")
+      runenv <- 'lakes'
+    }
+    if(is.na(cores)) cores <- detectCores()  
+    registerDoParallel(cores)
+    if(!dir.exists(results_dir)) dir.create(results_dir)
+    bake(file=paste0(results_dir,"cores.rds"),cores) -> cores
+    ```
+    ```{r seir_local}
+    foreach(i=1:Nlocal,.combine=c,
+    .options.future=list(seed=12138)
+    ) %dofuture% {
+    measSEIR |>
+    mif2(
+    Np=2000, Nmif=50,
+    cooling.fraction.50=0.5,
+    rw.sd=rw_sd(Beta=0.02, rho=0.02, mu_EI=0.02, eta=ivp(0.02)),
+    partrans=parameter_trans(log=c("Beta", "mu_EI"),logit=c("rho","eta")),
+    paramnames=c("Beta","rho","eta", "mu_EI")
+    )
+    } -> mifs_local
+    
+    registerDoRNG(12138)
+    foreach(mf=mifs_local,.combine=rbind) %dopar% {
+      library(pomp)
+      library(tidyverse)
+      evals <- replicate(Nreps_eval, logLik(pfilter(mf,Np=Np)))
+      ll <- logmeanexp(evals,se=TRUE)
+      mf %>% coef() %>% bind_rows() %>%
+        bind_cols(loglik=ll[1],loglik.se=ll[2])
+    } -> local_logliks
+    summary(unname(local_logliks$loglik))
+    ```
+    Here are the results from the global search. The distributions are a bit more noisy than the local search, but the best result improves the loglikelihood by around 1 unit.
+    ```{r seir_global, warning=FALSE}
+    set.seed(12138)
+    runif_design(
+      lower=c(Beta=5,rho=0.2,eta=0,mu_EI=1/3),
+      upper=c(Beta=80,rho=0.9,eta=1,mu_EI=3),
+      nseq=Nglobal
+    ) -> guesses
+    mf1 <- mifs_local[[1]]
+    
+    registerDoRNG(12138)
+    bake(file=paste0(results_dir,"global_search.rds"),{
+    foreach(guess=iter(guesses,"row"), .combine=rbind) %dopar% {
+      library(pomp)
+      library(tidyverse)
+      mf1 %>%
+        mif2(params=c(unlist(guess),fixed_params),Np=Np) %>%
+        mif2() -> mf
+      replicate(
+        Nreps_eval,
+        mf %>% pfilter(Np=Np) %>% logLik()
+      ) %>%
+        logmeanexp(se=TRUE) -> ll
+      mf %>% coef() %>% bind_rows() %>%
+        bind_cols(loglik=ll[1],loglik.se=ll[2])
+    } -> results
+    }) %>%
+      filter(is.finite(loglik)) -> results
+    summary(results$loglik)
+    ```
+2.  The improvement of SEIR is only about 1 unit of log-likelihood. (the best SIR log-likelihood is around -104) This improvement is probably not practically significant, which suggest that adding the $E$ parameter not necessarily help with capturing the variability of the data.
+3.  From the lecture slide, the correlations between these parameters in SIR model are mostly linear. However, under the SEIR model, the correlations are mostly non-linear. Also, the range of optimal $\rho$ and $\eta$ has also changed significantly from the SIR model. Overall, by adding an latent state, although the fitness of the model did not change much, the meaning of each fitted parameters may have very different interpretations.
+    ```{r comp_fit, fig.align='center', fig.dim=c(6,5)}
+    pairs(~loglik+Beta+eta+rho+mu_EI,
+          data=filter(results,loglik>max(loglik)-10))
+    ```
+4.  For profiling, we need to fix each reporting rate $\rho$, and see that parameters maximize the log-likelihood at that reporting rate. Per the past year solution [@sol], we should initialize it based on out global search. I've slightly modified the code to better suit the simulation result I got. Note that from the lecture note [@lec14], the CI is about 3\% ~ 7\%. The result from SEIR is shown below, which appears to be much better.
+    ```{r profile_rho}
+    filter(results,loglik>max(loglik)-5) %>% sapply(range) -> box
+    freeze(seed=12138,
+      profile_design(
+        rho =seq(0.01,0.95,length=Npoints_profile),
+        lower=box[1,c("Beta","eta","mu_EI")],
+        upper=box[2,c("Beta","eta","mu_EI")],
+        nprof=Nreps_profile, type="runif"
+      )) -> guesses
+    fixed_params <- c(N=20000, mu_IR=2, k=10)
+    bake(file=paste0(results_dir,"rho_profile.rds"),dependson=guesses,{
+      registerDoRNG(12138)
+      foreach(guess=iter(guesses,"row"), .combine=rbind) %dopar% {
+        library(pomp)
+        library(tidyverse)
+        mf1 %>% mif2(params=c(guess,fixed_params),Nmif=Nmif,
+          rw.sd=rw_sd(Beta=0.02,eta=ivp(0.02),mu_EI=0.02)) %>%
+          mif2(Nmif=Nmif,Np=Np,cooling.fraction.50=0.5) -> mf
+        replicate(
+          Nreps_eval,
+          mf %>% pfilter(Np=Np) %>% logLik()) %>%
+          logmeanexp(se=TRUE) -> ll
+        mf %>% coef() %>% bind_rows() %>%
+          bind_cols(loglik=ll[1],loglik.se=ll[2])
+      } -> prof_results
+    }) -> profile_results
+    ```
+    ```{r prof_res, fig.align='center', fig.dim=c(6,5), echo=FALSE}
+    profile_results %>%
+      filter(is.finite(loglik)) %>%
+      filter(loglik>max(loglik)-20) %>%
+      group_by(round(rho,2)) %>%
+      filter(rank(-loglik)<10) %>%
+      ungroup() %>%
+      ggplot(aes(x=rho,y=loglik))+
+      geom_point()+
+      geom_hline(
+        color="red",
+        yintercept=max(results$loglik)-0.5*qchisq(df=1,p=0.95)
+      )
+    profile_results  %>%
+      filter(is.finite(loglik)) %>%
+      filter(loglik>max(loglik)-0.5*qchisq(df=1,p=0.95)) %>%
+      summarize(min=min(rho),max=max(rho)) -> rho_ci
+    cat('Min:', rho_ci$min, 'Max:', rho_ci$max, '\n')
+    ```
+    
+5. Timing
+```{r timing, echo=FALSE}
+end_time <- Sys.time()
+runtime_minutes <- as.numeric(difftime(end_time, start_time, units = "mins"))
+runtime_message <- paste("Run time:", round(runtime_minutes, 2), "minutes")
+cat(runtime_message, file = sprintf("runtime_%s.txt", runenv))
+```
+
+## Acknowledgements
+For question 7.2, I've heavily relied on the code from lecture 14 [@lec14] and lecture 15 [@lec15] slides, as well as the past year solution [@sol]. For the local search, I've modified the local search code in lecture 14 for SIR model to make it work with SEIR model. For figures, I've adopted them from lecture 15 [@lec15] notes.
+
+## Reference
+
+
+
+
+
+
+
+
+

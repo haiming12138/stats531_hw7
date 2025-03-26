@@ -1,0 +1,27 @@
+#!/bin/bash
+
+#SBATCH --job-name=foreach_multicore
+#SBATCH --mail-user=ionides@umich.edu
+#SBATCH --mail-type=BEGIN,END,FAIL
+ 
+#SBATCH --account=stats531w24_class
+#SBATCH --partition=standard
+
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=36
+#SBATCH --cpus-per-task=1
+
+## 5GB/cpu is the basic share
+#SBATCH --mem-per-cpu=1GB
+
+## wall time hours:minutes:seconds
+#SBATCH --time=1:00:00
+
+###   Load software modules
+
+module load R
+
+####  Commands your job should run follow this line
+
+Rscript -e "Sys.setenv(RSTUDIO_PANDOC='$(PANDOC_PATH)'); rmarkdown::render('$(RMD_FILE)', output_format = 'html_document')"
+
