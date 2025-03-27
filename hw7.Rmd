@@ -39,7 +39,7 @@ start_time <- Sys.time()
 2.  Yes, but not with slurm or any job submission tools.
 3.  Here's the result from my local machine
     ```{r local_time, echo=FALSE}
-    time_local <- read.csv('test_local.csv', sep = ' ')
+    time_local <- read.csv('test_laptop.csv', sep = ' ')
     kable(head(time_local)) %>%
       kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
                     full_width = FALSE, position = "center")

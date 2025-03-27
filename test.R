@@ -29,7 +29,7 @@ system.time(
   foreach(i=1:10^4) %dopar% rnorm(10^4)
 ) -> time4
 
-write.table(file=sprintf("test_%s.txt", platform),
+write.table(file=sprintf("test_%s.csv", platform),
   rbind(time0,time1,time2,time3,time4))
 
 
