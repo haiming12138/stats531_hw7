@@ -14,7 +14,7 @@ output:
     extra_dependencies:
       - amsmath
 ---
-```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE, include = FALSE}
 packages <- c(
   "knitr", "kableExtra", "pomp", "tidyverse",
   "doParallel", "doRNG", "foreach", "doFuture", "future"
@@ -97,7 +97,7 @@ start_time <- Sys.time()
     ```
   Here are the log-likelihoods from the SEIR model local search, which are are around -104. These log-likelihoods are evaluated via particle filter.
     ```{r sim_setting, echo=FALSE, message=FALSE}
-    run_level <- 1
+    run_level <- 3
     Np <-              switch(run_level,100, 1e3, 2e3)
     Nlocal <-          switch(run_level,  2,   5,  20)
     Nglobal <-         switch(run_level,  2,   20, 100)

@@ -1,4 +1,4 @@
-CLEAN_FILES = laptop_* lakes_* *.html *.out
+CLEAN_FILES = laptop_* lakes_* *.out
 RMD_FILE = hw7.Rmd
 PANDOC_PATH := $(shell which pandoc)
 
